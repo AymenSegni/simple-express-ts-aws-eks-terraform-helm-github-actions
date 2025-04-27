@@ -1,0 +1,128 @@
+name: App CI/CD Pipelines
+
+on:
+  
+  pull_request:
+    branches: [ main ]
+
+env:
+  AWS_REGION: eu-west-1
+  EKS_CLUSTER_NAME: simple-prod
+  NAME: simple
+  ENVIRONMENT: prod
+  BUCKET_TF_STATE: ${{ secrets.BUCKET_TF_STATE }}
+
+jobs:
+
+  build-and-push:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v3
+      
+      - uses: actions/checkout@v3
+      
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v1
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Login to Amazon ECR
+        id: login-ecr
+        uses: aws-actions/amazon-ecr-login@v1
+          
+      - name: Build and push image to ECR
+        uses: docker/build-push-action@v4
+        with:
+          context: .
+          push: true
+          tags: ${{ steps.login-ecr.outputs.registry }}/${{ env.NAME }}-${{ env.ENVIRONMENT }}:${{ github.sha }}
+
+  deploy:
+    needs: build-and-push
+
+    runs-on: ubuntu-latest
+
+    defaults:
+
+      run:
+ 
+        shell: bash
+ 
+        # We keep Terraform files in the terraform directory.
+ 
+        working-directory: ./app-deploy
+ 
+    steps:
+      - uses: actions/checkout@v3
+      
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v1
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Login to Amazon ECR
+        id: login-ecr
+        uses: aws-actions/amazon-ecr-login@v1 
+ 
+      - name: Setup Terraform with specified version on the runner
+ 
+        uses: hashicorp/setup-terraform@v2
+ 
+        with:
+ 
+          terraform_version: 1.7.0
+ 
+ 
+      - name: Terraform init
+ 
+        id: init
+ 
+        run: terraform init -backend-config="bucket=$BUCKET_TF_STATE"
+ 
+ 
+      - name: Terraform format
+ 
+        id: fmt
+ 
+        run: terraform fmt -check
+  
+      - name: Terraform validate
+ 
+        id: validate
+ 
+        run: terraform validate
+ 
+      - name: Terraform plan
+ 
+        id: plan
+ 
+        if: github.event_name == 'pull_request'
+ 
+        run: |
+        
+          terraform plan -var='image=${{ steps.login-ecr.outputs.registry }}/${{ env.NAME }}-${{ env.ENVIRONMENT }}:${{ github.sha }}' -no-color -input=false
+ 
+        continue-on-error: true
+
+
+      - name: Terraform Apply
+
+        run: terraform apply -var='image=${{ steps.login-ecr.outputs.registry }}/${{ env.NAME }}-${{ env.ENVIRONMENT }}:${{ github.sha }}' -auto-approve -input=false
+ 
+      # - name: Install kubectl
+      #   uses: azure/setup-kubectl@v2.0
+      #   id: install
+  
+      # - name: Update kubeconfig
+      #   run: aws eks update-kubeconfig --region ${{ env.AWS_REGION }} --name ${{ env.EKS_CLUSTER_NAME }}
+        
+      # - name: Deploy to EKS
+      #   run: |
+      #     export IMAGE=${{ steps.login-ecr.outputs.registry }}/${{ env.NAME }}-${{ env.ENVIRONMENT }}:${{ github.sha }}
+      #     export APP_NAME=${{ env.NAME }}-${{ env.ENVIRONMENT }}
+      #     kubectl apply -f ./app-deploy/deployment.yaml
+      #     kubectl apply -f ./app-deploy/service.yaml 

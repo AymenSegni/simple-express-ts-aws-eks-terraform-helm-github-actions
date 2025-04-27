@@ -1,0 +1,8 @@
+apiVersion: v2
+name: ${App_NAME}
+version: 0.0.1
+description: Helm chart for deploying Simple Express JS
+type: application
+maintainers:
+  - email: work.aymen.segni@gmail.com
+    name: Aymen Segni
